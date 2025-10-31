@@ -150,6 +150,7 @@ async def play_next(guild_id):
     queue = get_queue(guild_id)
     
     if not queue.voice_client:
+        print("No voice client available")
         return
         
     song = queue.get_next()
@@ -160,6 +161,9 @@ async def play_next(guild_id):
             if queue.inactivity_task:
                 queue.inactivity_task.cancel()
             
+            print(f"Attempting to play: {song['title']}")
+            print(f"URL: {song['url']}")
+            
             loop = asyncio.get_event_loop()
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(song['url'], download=False))
             
@@ -167,20 +171,26 @@ async def play_next(guild_id):
                 data = data['entries'][0]
             
             url = data['url']
+            print(f"Stream URL obtained: {url[:100]}...")
             
             def after_playing(error):
                 if error:
                     print(f"Error playing: {error}")
+                else:
+                    print("Finished playing song")
                 asyncio.run_coroutine_threadsafe(play_next(guild_id), bot.loop)
             
-            queue.voice_client.play(
-                discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS),
-                after=after_playing
-            )
+            source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+            queue.voice_client.play(source, after=after_playing)
+            print(f"Now playing: {song['title']}")
+            
         except Exception as e:
-            print(f"Error playing song: {e}")
+            print(f"Error in play_next: {e}")
+            import traceback
+            traceback.print_exc()
             asyncio.run_coroutine_threadsafe(play_next(guild_id), bot.loop)
     else:
+        print("No more songs in queue")
         # Start inactivity timer
         queue.inactivity_task = asyncio.create_task(inactivity_check(guild_id))
 
@@ -200,7 +210,13 @@ async def play(ctx, *, query: str):
     
     # Connect to voice channel if not connected
     if not queue.voice_client:
-        queue.voice_client = await ctx.author.voice.channel.connect()
+        try:
+            queue.voice_client = await ctx.author.voice.channel.connect()
+            print(f"Connected to voice channel: {ctx.author.voice.channel.name}")
+        except Exception as e:
+            await ctx.send(f"❌ Failed to connect to voice channel: {e}")
+            print(f"Voice connection error: {e}")
+            return
     
     await ctx.send(f"🔍 Searching for: **{query}**")
     
@@ -210,14 +226,22 @@ async def play(ctx, *, query: str):
     if 'spotify.com' in query:
         try:
             songs = extract_spotify_info(query)
+            print(f"Extracted {len(songs)} songs from Spotify")
         except Exception as e:
             await ctx.send(f"❌ Error processing Spotify link: {e}")
+            print(f"Spotify error: {e}")
             return
     else:
         # YouTube URL or search
         if not query.startswith('http'):
             query = f"ytsearch:{query}"
-        songs = await search_song(query)
+        try:
+            songs = await search_song(query)
+            print(f"Found songs: {songs}")
+        except Exception as e:
+            await ctx.send(f"❌ Error searching: {e}")
+            print(f"Search error: {e}")
+            return
     
     if not songs:
         await ctx.send("❌ Could not find any songs!")
@@ -234,6 +258,7 @@ async def play(ctx, *, query: str):
     
     # Start playing if not already playing
     if not queue.voice_client.is_playing():
+        print("Starting playback...")
         await play_next(ctx.guild.id)
 
 @bot.command()
@@ -339,6 +364,7 @@ async def show_commands(ctx):
         "!leave": "Disconnect from voice channel",
         "!loop": "Toggle loop for current song",
         "!queue": "Show current queue",
+        "!test": "Test voice connection",
         "!commands": "Show this message"
     }
     
@@ -347,6 +373,29 @@ async def show_commands(ctx):
     
     embed.set_footer(text="Auto-leaves after 5 minutes of inactivity")
     await ctx.send(embed=embed)
+
+@bot.command()
+async def test(ctx):
+    """Test voice connection"""
+    if not ctx.author.voice:
+        await ctx.send("❌ Join a voice channel first!")
+        return
+    
+    queue = get_queue(ctx.guild.id)
+    
+    if not queue.voice_client:
+        queue.voice_client = await ctx.author.voice.channel.connect()
+    
+    info = f"""
+    **Voice Connection Test:**
+    Connected: {queue.voice_client.is_connected()}
+    Playing: {queue.voice_client.is_playing()}
+    Paused: {queue.voice_client.is_paused()}
+    Latency: {queue.voice_client.latency}ms
+    Channel: {queue.voice_client.channel.name}
+    """
+    await ctx.send(info)
+    print(f"Voice client info: {info}")
 
 # Run the bot
 async def main():
