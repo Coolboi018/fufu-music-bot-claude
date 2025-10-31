@@ -7,6 +7,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from collections import deque
 import re
+from aiohttp import web
 
 # Bot setup
 intents = discord.Intents.default()
@@ -186,7 +187,7 @@ async def play_next(guild_id):
 @bot.event
 async def on_ready():
     print(f'{bot.user} is online!')
-    await bot.change_presence(activity=discord.Game(name="!help for commands"))
+    await bot.change_presence(activity=discord.Game(name="!commands for help"))
 
 @bot.command()
 async def play(ctx, *, query: str):
@@ -320,8 +321,8 @@ async def queue(ctx):
     
     await ctx.send(embed=embed)
 
-@bot.command()
-async def help(ctx):
+@bot.command(name='commands')
+async def show_commands(ctx):
     """Show all commands"""
     embed = discord.Embed(
         title="🎵 Music Bot Commands",
@@ -337,7 +338,8 @@ async def help(ctx):
         "!stop": "Stop playing and clear queue",
         "!leave": "Disconnect from voice channel",
         "!loop": "Toggle loop for current song",
-        "!queue": "Show current queue"
+        "!queue": "Show current queue",
+        "!commands": "Show this message"
     }
     
     for cmd, desc in commands_list.items():
@@ -347,4 +349,27 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 # Run the bot
-bot.run(os.getenv('DISCORD_TOKEN'))
+async def main():
+    # Start simple web server for Render health checks
+    app = web.Application()
+    
+    async def health_check(request):
+        return web.Response(text="Bot is running!")
+    
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.getenv('PORT', 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
+    print(f"Web server started on port {port}")
+    
+    # Start the bot
+    await bot.start(os.getenv('DISCORD_TOKEN'))
+
+if __name__ == "__main__":
+    asyncio.run(main())
